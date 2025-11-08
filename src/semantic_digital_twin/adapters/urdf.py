@@ -374,5 +374,6 @@ class URDFParser:
                     )
             file_path = file_path.replace("package://" + package_name, package_path)
         if "file://" in file_path:
-            file_path = file_path.replace("file://", "./")
+            pass
+            #file_path = file_path.replace("file://", "./")
         return file_path

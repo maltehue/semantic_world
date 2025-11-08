@@ -80,7 +80,7 @@ class MultiParser:
                 with_collision=with_collision,
                 inertia_source=inertia_source,
                 default_rgba=default_rgba,
-                add_xform_for_each_geom=add_xform_for_each_geom,
+                #add_xform_for_each_geom=add_xform_for_each_geom,
             )
         elif file_ext == ".urdf":
             factory = UrdfImporter(

@@ -79,7 +79,7 @@ class VizMarkerPublisher(StateChangeCallback):
         """
         marker_array = MarkerArray()
         for body in self.world.bodies:
-            for i, collision in enumerate(body.collision):
+            for i, collision in enumerate(body.visual):
                 msg = Marker()
                 msg.header.frame_id = self.reference_frame
                 msg.ns = body.name.name

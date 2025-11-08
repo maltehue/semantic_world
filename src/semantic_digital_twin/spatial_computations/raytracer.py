@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from abc import abstractmethod
+from copy import deepcopy
+
 from typing_extensions import Tuple, List, TYPE_CHECKING
 
 import numpy as np
@@ -81,9 +84,14 @@ class RayTracer:
             if body.name.name not in "\t".join(self.scene.graph.nodes)
         ]
         for body in bodies_to_add:
-            for i, collision in enumerate(body.collision):
+            for i, collision in enumerate(body.visual):
+                if hasattr(collision, "scale"):
+                    mesh = deepcopy(collision.mesh)
+                    mesh.apply_scale(collision.scale.x)
+                else:
+                    mesh = collision.mesh
                 self.scene.add_geometry(
-                    collision.mesh,
+                    mesh,
                     node_name=body.name.name + f"_collision_{i}",
                     parent_node_name="world",
                     transform=self.world.compute_forward_kinematics_np(
@@ -100,7 +108,7 @@ class RayTracer:
         This is necessary to ensure that the ray tracing uses the correct positions and orientations.
         """
         for body in self.world.bodies:
-            for i, collision in enumerate(body.collision):
+            for i, collision in enumerate(body.visual):
                 transform = (
                     self.world.compute_forward_kinematics_np(self.world.root, body)
                     @ collision.origin.to_np()
