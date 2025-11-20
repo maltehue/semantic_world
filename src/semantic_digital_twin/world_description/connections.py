@@ -16,6 +16,7 @@ from ..adapters.world_entity_kwargs_tracker import (
 from ..datastructures.prefixed_name import PrefixedName
 from ..datastructures.types import NpMatrix4x4
 from ..spatial_types.derivatives import DerivativeMap
+from ..spatial_types.derivatives import Derivatives
 
 if TYPE_CHECKING:
     from ..world import World
@@ -350,6 +351,109 @@ class RevoluteConnection(ActiveConnection1DOF):
 
     def __hash__(self):
         return hash((self.parent, self.child))
+
+
+@dataclass(eq=False)
+class DifferentialConnection1DOF(ActiveConnection1DOF, HasUpdateState):
+    """
+    A 1-DoF active connection whose rate of change depends on the state of
+    other joints and an explicit time variable.
+
+    This connection evaluates a user-provided rate function on every world
+    update and integrates the position accordingly. This allows modeling
+    differential equations where a joint's velocity depends on the entire
+    system state and time.
+
+    Notes:
+    - The world invokes update_state(dt) after applying control commands and
+      integrating downwards. This class computes its own velocity and performs
+      an additional position integration step for its associated DoF.
+    - The provided rate function is not serialized. Attempting to serialize
+      this connection will raise a NotImplementedError.
+    """
+
+    # The callable that computes velocity for this DoF, given the world, the
+    # elapsed simulated time and this connection instance.
+    rate_function: Any = field(repr=False, default=None)
+
+    # Internal simulated time accumulator.
+    _elapsed_time: float = field(init=False, default=0.0, repr=False)
+
+    def add_to_world(self, world: 'World'):
+        """
+        Registers the connection in the world. The kinematic effect is the
+        same as a prismatic joint along the specified axis where the position
+        is this connection's DoF value.
+        """
+        super().add_to_world(world)
+        translation_axis = self.axis * self.dof.symbols.position
+        self.connection_T_child_expression = cas.TransformationMatrix.from_xyz_rpy(
+            x=translation_axis[0],
+            y=translation_axis[1],
+            z=translation_axis[2],
+            child_frame=self.child,
+        )
+
+    def to_json(self) -> Dict[str, Any]:
+        # Serialize like a standard ActiveConnection1DOF. We intentionally do not
+        # serialize the runtime-only rate_function or the internal elapsed time.
+        # This enables cloning (e.g., World.__deepcopy__) and symbolic pipelines
+        # like giskardpy while leaving behavior-defining callbacks to be supplied
+        # at runtime if needed.
+        return super().to_json()
+
+    @classmethod
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> 'DifferentialConnection1DOF':
+        # Reconstruct the connection from JSON without a rate_function. The caller
+        # may assign a rate_function at runtime as needed.
+        tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+        parent = tracker.get_kinematic_structure_entity(
+            name=PrefixedName.from_json(data["parent_name"])
+        )
+        child = tracker.get_kinematic_structure_entity(
+            name=PrefixedName.from_json(data["child_name"])
+        )
+        return cls(
+            name=PrefixedName.from_json(data["name"]),
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=cas.TransformationMatrix.from_json(
+                data["parent_T_connection_expression"], **kwargs
+            ),
+            frozen_for_collision_avoidance=data["frozen_for_collision_avoidance"],
+            axis=cas.Vector3.from_iterable(data["axis"]),
+            multiplier=data["multiplier"],
+            offset=data["offset"],
+            dof_name=PrefixedName.from_json(data["dof_name"]),
+            rate_function=None,
+        )
+
+    @property
+    def active_dofs(self) -> List[DegreeOfFreedom]:
+        return [self.raw_dof]
+
+    def update_state(self, dt: float) -> None:
+        """
+        Update this connection's DoF based on a time- and state-dependent
+        velocity law.
+
+        The method will:
+        - Compute velocity = rate_function(world, t, self)
+        - Set the DoF's velocity in the world state
+        - Integrate and add position increment: position += velocity * dt
+        """
+        if self.rate_function is None:
+            return
+
+        self._elapsed_time += dt
+        # Compute velocity from the user-defined law
+        velocity_value = float(self.rate_function(self._world, self._elapsed_time, self))
+
+        # Write velocity and integrate position for the raw DoF (without multiplier/offset)
+        state = self._world.state
+        name = self.dof.name
+        state[name].velocity = velocity_value / self.multiplier
+        state[name].position = state[name].position + (velocity_value / self.multiplier) * dt
 
 
 @dataclass(eq=False)
